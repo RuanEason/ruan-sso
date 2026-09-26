@@ -55,6 +55,8 @@ npm run keys:generate
 ```bash
 npm run keys:rotate -- --dry-run   # 先预览
 npm run keys:rotate                # 实际执行
+npm run keys:prune                 # 1 小时后：预览可清理的旧密钥
+npm run keys:prune -- --apply      # 实际清理
 ```
 
 详见 [`docs/key-management.md`](docs/key-management.md)。

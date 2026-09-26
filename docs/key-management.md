@@ -107,6 +107,17 @@ npm run keys:rotate -- --dry-run    # 只显示将发生什么，不写数据库
 6. **清理旧密钥**：在 `retiredAt + 1 小时` 之后，才能删除 `SigningKey` 表里 `status = RETIRED`
    的旧行。早于这个时间删除，等于让用旧密钥签发的、仍在有效期内的 token 全部失效。
 
+   用脚本做，不要手写 SQL：
+
+   ```bash
+   npm run keys:prune              # 默认 dry-run，只报告哪些可删
+   npm run keys:prune -- --apply   # 实际删除
+   ```
+
+   `keys:prune` 只会删除**同时满足**「`status = RETIRED`」且「`retiredAt + 1 小时` 已过」
+   的行。`ACTIVE` 行在任何情况下都不会被删；尚未过宽限期的行会被跳过并打印可删时间。
+   宽限期内的密钥是**正常状态**，轮换完立刻跑 prune 会看到 "NOTHING TO PRUNE"。
+
 ---
 
 ## 4. 私钥泄露应急流程
@@ -134,6 +145,9 @@ npm run keys:rotate -- --dry-run    # 只显示将发生什么，不写数据库
    > 注意：轮换只能保护**将来**签发的 token，无法追溯撤销已经签发出去的 token。
    > 已泄露 token 会在剩余有效期内（最多 1 小时）继续被接入方接受。要缩短这个窗口，
    > 只能调小 `ACCESS_TOKEN_TTL_SEC` 并重启。
+
+   应急场景**不要**急着 prune：泄露发生时，旧密钥可能仍在为合法用户的在途 token 服务。
+   先等宽限期过去，再按上一节的步骤 6 清理。
 
 4. **撤销受影响的 session**。Session 与签名密钥是两套独立的凭证：轮换签名密钥
    **不会**让已登录用户在 RUAN 门户内掉线（session 是数据库里的记录 + cookie，不依赖 JWT）。
@@ -165,16 +179,46 @@ npm run keys:rotate -- --dry-run    # 只显示将发生什么，不写数据库
 
 ---
 
-## 5. 相关命令速查
+## 5. 验签用哪把密钥（`resolveVerifyKey`）
+
+`src/lib/auth/keys.ts` 的 `resolveVerifyKey()` 按 token 头部**是否带 `kid`** 分两种情况，
+这是刻意的，不要合并：
+
+| token 的 `kid` | 行为 |
+|----------------|------|
+| **没有 `kid`** | 回落到环境变量 `JWT_PUBLIC_KEY_PEM` 验签。这类 token 早于 `kid` 机制，无从查表。 |
+| **带了 `kid`** | **必须**在 `SigningKey` 表里查到该 `kid`，查不到就拒绝——即使它恰好等于当前配置的公钥。 |
+
+为什么带 `kid` 时要强制查表：`SigningKey` 表是本部署**唯一**的"哪些密钥有权签发 token"的
+权威记录。如果带着 `kid` 也能直接命中环境变量里的公钥，那么**换掉 `JWT_PUBLIC_KEY_PEM`
+却没把新公钥登记进库**，会静默地让一把未登记的密钥投入使用——发布到 JWKS 的是一把密钥，
+实际生效的是另一把，而没有任何地方会报错。
+
+这条规则让上述漂移变成**验签失败**而不是静默通过。所以：
+
+- 换密钥后如果没登记进库，带新 `kid` 的 token 会被拒绝（而不是被接受）；
+- 正常情况下不需要关心：服务签发的 token 总是带 `kid`（见 `src/lib/auth/jwt.ts`），
+  且 `keys:rotate` / `db:seed` 都会登记公钥。
+
+> 清理旧密钥（`keys:prune`）之后，该 `kid` 的 token 会被拒绝。这是安全的——能被 prune 的
+> 密钥，其签发过的 token 早已全部过期。
+
+---
+
+## 6. 相关命令速查
 
 | 命令 | 用途 |
 |------|------|
 | `npm run keys:generate` | 生成全新密钥对（首次部署 / 无历史 token 时用） |
 | `npm run keys:rotate -- --dry-run` | 预览轮换将做什么 |
 | `npm run keys:rotate` | 执行轮换（登记新公钥 + 退休旧密钥，不删旧密钥） |
-| `npm run keys:rotate -- --dry-run` 后核对 | 确认退休的 kid 正确 |
+| `npm run keys:prune` | 预览哪些已过宽限期的 `RETIRED` 密钥可删（默认不删） |
+| `npm run keys:prune -- --apply` | 实际删除已过宽限期的 `RETIRED` 密钥 |
 | `curl $APP_URL/.well-known/jwks.json` | 核对已发布的 kid 集合 |
 
 > `keys:generate` 与 `keys:rotate` 的区别：前者**不碰数据库**，只打印一对新密钥，
 > 适用于首次部署；后者会更新 `SigningKey` 表并保留旧公钥，是**已经在跑的服务**换密钥的
 > 唯一正确方式。
+
+> `keys:prune` 只删除**已经过了 `retiredAt + 1 小时`** 的 `RETIRED` 行，且默认是 dry-run。
+> 删除前请确认：该密钥签发的所有 token 都已过期（1 小时足够），否则在线用户会掉线。

@@ -136,12 +136,20 @@ export async function buildJwks(): Promise<{ keys: JWK[] }> {
 /**
  * Resolves the key used to verify a token, by its `kid` header.
  *
- * Falls back to the configured key when the token carries no `kid`, so tokens
- * issued before `kid` was introduced remain verifiable.
+ * Two distinct cases, deliberately handled differently:
+ *
+ *   - The token carries NO `kid`. It predates the introduction of `kid`, so
+ *     there is nothing to look up; fall back to the configured key.
+ *   - The token carries a `kid`. It MUST be found in the registry, which is the
+ *     authoritative record of every key that may legitimately have signed a
+ *     token. An unknown `kid` is rejected even if it happens to match the
+ *     currently configured key, so that swapping `JWT_PUBLIC_KEY_PEM` without
+ *     registering the key cannot silently bring an unregistered key into use.
+ *
+ * Returns null when the `kid` is not a key this deployment ever published.
  */
 export async function resolveVerifyKey(kid?: string): Promise<KeyObject | null> {
-  const current = await loadSigningKey()
-  if (!kid || kid === current.kid) {
+  if (!kid) {
     return importSPKI(getJwtPublicKeyPem(), "RS256")
   }
 
