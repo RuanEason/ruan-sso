@@ -83,13 +83,15 @@ npm run dev
 ### 5. 质量校验
 
 ```bash
-npm run lint     # ESLint
-npm test         # 单元测试（Vitest）
-npm run build    # 生产构建
+npm run lint        # ESLint（要求 0 报错 0 警告）
+npm test            # 单元测试（Vitest）
+npx tsc --noEmit    # 类型检查
+npm run build       # 生产构建
 ```
 
-单元测试只覆盖纯逻辑（协议参数校验、PKCE、token 哈希、限流窗口、跳转地址白名单），
-不依赖数据库、开发服务器或浏览器，因此可在毫秒级跑完，适合作为每次提交的门禁。
+单元测试只覆盖纯逻辑（协议参数校验、PKCE、token 哈希、限流窗口、跳转地址白名单、
+门户可见应用过滤），不依赖数据库、开发服务器或浏览器，因此可在毫秒级跑完，适合作为
+每次提交的门禁。
 
 ## 组织（Organization）
 
@@ -175,6 +177,8 @@ http://localhost:3000/oauth/authorize?response_type=code&client_id=ruan-demo-app
 3. 登录并同意授权后，回调拿到 `code`
    - 首次授权会展示同意页；若此前已授权且本次 scope 未超出，则自动跳过同意页，同样带 `code` 回调
    - 用户可在 `/account` 撤销授权，撤销后下次登录会重新展示同意页
+   - 用户直接访问 `/login`（不是从你的应用跳转过来）时，登录后进入应用门户 `/portal`，
+     由用户自行选择要进入的应用；门户只发起授权请求，不改变上面的流程
 4. 兑换 token：
 
 ```bash
@@ -242,6 +246,8 @@ if (payload.nonce !== expectedNonce) throw new Error("nonce mismatch")
 ```
 src/app/
   login/                 # 登录门户（login-04 布局）
+  portal/                # 应用门户：登录后的落点，列出用户有权访问的应用
+  portal/launch/[clientId]  # 交由应用自身入口发起授权（不代发请求）
   consent/               # 授权同意
   account/               # 已授权的应用与撤销授权
   admin/                 # 管理后台
@@ -251,8 +257,39 @@ src/app/
   api/admin/             # 后台管理 API（含 /api/admin/audit）
   .well-known/           # OIDC Discovery
 src/components/login-form.tsx
+src/components/portal-*.tsx
 src/lib/auth/            # 密码、Session、JWT
 src/lib/audit/           # 审计日志写入、查询与事件目录
 src/lib/oidc/            # 校验、同意流程与 token 兑换
+src/lib/portal.ts        # 门户可见应用过滤（与 userCanAccessClient 同一套规则）
+src/lib/return-to.ts     # 登录落点与 returnTo 校验（零依赖，客户端/服务端共用）
 prisma/                  # Schema / migrations / seed
 ```
+
+### 登录落点
+
+| 情形 | 落点 |
+| --- | --- |
+| 带 `returnTo`（从应用跳转而来） | 原样回到该地址，授权流程因此得以完成 |
+| 无 `returnTo`，普通用户 | `/portal` |
+| 无 `returnTo`，管理员 | `/admin` |
+| `returnTo` 不安全（如 `//evil.com`） | 视为未提供，按角色分流 |
+
+`returnTo` 校验只有一份实现（`src/lib/return-to.ts`），客户端登录表单与服务端共用，
+不再有重复实现可以互相漂移。
+
+### 应用门户 `/portal`
+
+登录后没有落点（用户直接访问 `/login`）时，门户是该用户的落点：列出他有权访问的应用，
+点击即开始授权。它**只做导航**。
+
+- 可见性由 `visibleAppsForUser` 决定，与授权端点实际执行的 `userCanAccessClient`
+  使用同一套规则（`allowAllOrganizations` 或绑定组织的成员），避免“门户里看得见、
+  点进去被拒”。
+- 点击应用后由 `/portal/launch/<client_id>` 把浏览器**交给应用自身的入口**，由应用发起
+  自己的授权请求。门户**不构造授权请求、不生成 PKCE**：PKCE 的 `code_verifier` 必须留在
+  换取令牌的一方，门户无法把它交给第三方应用的回调地址（早期实现试图这么做，被依赖方
+  以 state 不匹配拒绝）。因此发码路径仍然只有一条，即
+  `/oauth/authorize` → `approveAndIssueCode()`。
+- 该路由的 `?next=` 仅接受与已注册回调地址**同源**的值，防止开放重定向。
+- 用户没有任何可访问应用时，门户显示空状态并提示联系管理员。

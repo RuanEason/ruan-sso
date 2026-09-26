@@ -17,15 +17,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { NetworkParticles } from "@/components/network-particles"
 import { RuanLoader, RuanPageLoader } from "@/components/ruan-loader"
-
-/**
- * A leading "/" is not enough: "//evil.com" is a protocol-relative URL that the
- * browser resolves to a different origin, so accepting it would turn returnTo
- * into an open redirect after login. Mirrors isSafeReturnTo in lib/oidc/validate.
- */
-function isSafeReturnTo(value: string): boolean {
-  return value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")
-}
+import { resolvePostLoginDestination } from "@/lib/return-to"
 
 function LoginFormInner({
   className,
@@ -33,9 +25,23 @@ function LoginFormInner({
 }: React.ComponentProps<"div">) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const requestedReturnTo = searchParams.get("returnTo") || "/admin"
-  const returnTo = isSafeReturnTo(requestedReturnTo) ? requestedReturnTo : "/admin"
-  const [error, setError] = useState<string | null>(null)
+  // The destination is decided *after* login, from the role the server returns:
+  // with no returnTo the landing page is role-dependent (users → /portal,
+  // admins → /admin), and the role is not known before the request is made.
+  // Validating here would only duplicate that decision against a role we do not
+  // have yet, so the raw value is passed through and resolved in onSubmit.
+  const requestedReturnTo = searchParams.get("returnTo")
+  // `?error=` is how the admin area explains a refusal it performed itself: it
+  // redirects here rather than rendering its own page, so without this the user
+  // sees a bare login form with no indication of what just happened.
+  const refused = searchParams.get("error")
+  const [error, setError] = useState<string | null>(() =>
+    refused === "forbidden"
+      ? "你的账号没有访问管理后台的权限。"
+      : refused
+        ? "登录状态已失效，请重新登录。"
+        : null
+  )
   const [pending, setPending] = useState(false)
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -58,10 +64,16 @@ function LoginFormInner({
         setPending(false)
         return
       }
-      // `returnTo` is already validated above, so it is safe to navigate to.
-      const dest =
-        data.user?.role === "ADMIN" && returnTo === "/admin" ? "/admin" : returnTo
-      router.push(dest)
+      // Resolved through the shared helper, which validates returnTo (rejecting
+      // protocol-relative targets) and falls back by role. A user who reached
+      // /login directly lands on the portal instead of being sent to /admin and
+      // bounced straight back here.
+      router.push(
+        resolvePostLoginDestination({
+          returnTo: requestedReturnTo,
+          role: data.user?.role,
+        })
+      )
       router.refresh()
     } catch {
       setError("网络错误，请重试")

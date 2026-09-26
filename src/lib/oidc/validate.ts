@@ -166,17 +166,10 @@ export function authorizeReturnTo(params: AuthorizeParams): string {
 }
 
 /**
- * Whether a post-login redirect target is safe to send the browser to.
+ * Re-exported from `@/lib/return-to`, which is the single implementation.
  *
- * A leading `/` alone is not sufficient: `//evil.com` and `/\evil.com` are
- * protocol-relative URLs that browsers resolve to another origin, so a naive
- * `startsWith("/")` check turns `returnTo` into an open redirect after a
- * successful login. Only same-origin absolute paths are allowed.
+ * The check used to be defined here and hand-copied into the login form. It now
+ * lives in a dependency-free module so the client component can import the same
+ * function instead of a duplicate, and so neither copy can drift from the other.
  */
-export function isSafeReturnTo(value: string | null | undefined): boolean {
-  if (!value) return false
-  if (!value.startsWith("/")) return false
-  // Reject protocol-relative ("//host") and backslash variants of it.
-  if (value.startsWith("//") || value.startsWith("/\\")) return false
-  return true
-}
+export { isSafeReturnTo } from "@/lib/return-to"
