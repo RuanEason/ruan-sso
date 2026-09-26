@@ -56,3 +56,127 @@ export function partitionRetiredKeys<T extends RetiredKeyRow>(
 
   return { eligible, tooEarly }
 }
+
+export type KeyHealthInput = {
+  /** kid derived from JWT_PUBLIC_KEY_PEM, or null when the PEM is unreadable. */
+  envKid: string | null
+  /** Every SigningKey row, in any status. */
+  rows: readonly RetiredKeyRow[]
+  /** kids present in the JWKS document that buildJwks() produces. */
+  jwksKids: readonly string[]
+  now: Date
+  ttlMs?: number
+}
+
+export type KeyHealthIssue = {
+  /** Machine-readable id, so callers can distinguish severity without parsing. */
+  code:
+    | "no-active-key"
+    | "multiple-active-keys"
+    | "env-key-not-registered"
+    | "active-key-not-published"
+    | "retired-key-not-published"
+    | "stale-retired-keys"
+  severity: "error" | "warning"
+  message: string
+}
+
+/**
+ * Audits the three things that must agree for signing to work: the key in the
+ * environment, the registry, and the published JWKS.
+ *
+ * This exists because those can drift in a way that is invisible until a relying
+ * party rejects a token: editing .env without restarting publishes one key while
+ * the process signs with another, and rotating without redeploying the new
+ * environment leaves the registry ahead of the running server.
+ *
+ * Pure: the caller supplies everything, including `now`. No database, no env.
+ */
+export function auditKeyHealth(input: KeyHealthInput): KeyHealthIssue[] {
+  const ttl = input.ttlMs ?? TOKEN_TTL_MS
+  const issues: KeyHealthIssue[] = []
+
+  const active = input.rows.filter((row) => row.status === "ACTIVE")
+  const retired = input.rows.filter((row) => row.status === "RETIRED")
+  const published = new Set(input.jwksKids)
+
+  // Exactly one ACTIVE key. Zero means nothing can be traced as the signer;
+  // more than one means a previous rotation did not retire its predecessor.
+  if (active.length === 0) {
+    issues.push({
+      code: "no-active-key",
+      severity: "error",
+      message:
+        "No ACTIVE key in SigningKey. The deployment has no registered signer; " +
+        "run `npm run keys:rotate` or `npm run db:seed` to register one.",
+    })
+  } else if (active.length > 1) {
+    issues.push({
+      code: "multiple-active-keys",
+      severity: "error",
+      message:
+        `${active.length} ACTIVE keys in SigningKey (${active.map((r) => r.kid).join(", ")}). ` +
+        "Only one key should be ACTIVE; retire the stale ones with `npm run keys:rotate`.",
+    })
+  }
+
+  // The environment key must be the registered signer. This is the drift that
+  // masks itself: the server signs with the env key while the registry says
+  // otherwise, and only relying parties ever notice.
+  if (input.envKid === null) {
+    issues.push({
+      code: "env-key-not-registered",
+      severity: "error",
+      message: "JWT_PUBLIC_KEY_PEM is missing or malformed; cannot derive a kid.",
+    })
+  } else if (!active.some((row) => row.kid === input.envKid)) {
+    issues.push({
+      code: "env-key-not-registered",
+      severity: "error",
+      message:
+        `The key in the environment (kid=${input.envKid}) is not registered as ACTIVE. ` +
+        "The server would sign tokens that the registry does not recognise. " +
+        "Rotate, or restart after deploying the matching environment.",
+    })
+  }
+
+  // Everything the registry says may legitimately verify must be published, or
+  // tokens signed with it cannot be checked by relying parties.
+  for (const row of active) {
+    if (!published.has(row.kid)) {
+      issues.push({
+        code: "active-key-not-published",
+        severity: "error",
+        message: `ACTIVE key ${row.kid} is missing from the JWKS. Tokens it signs cannot be verified.`,
+      })
+    }
+  }
+
+  const { eligible, tooEarly } = partitionRetiredKeys(retired, input.now, ttl)
+  for (const row of retired) {
+    // Retired keys must stay published for their whole grace period, otherwise
+    // tokens issued just before the rotation stop verifying too early.
+    const stillNeeded = tooEarly.some((deferred) => deferred.kid === row.kid)
+    if (stillNeeded && !published.has(row.kid)) {
+      issues.push({
+        code: "retired-key-not-published",
+        severity: "error",
+        message:
+          `RETIRED key ${row.kid} is still inside its grace period but is not in the JWKS. ` +
+          "Tokens signed with it will fail to verify.",
+      })
+    }
+  }
+
+  if (eligible.length > 0) {
+    issues.push({
+      code: "stale-retired-keys",
+      severity: "warning",
+      message:
+        `${eligible.length} RETIRED key(s) are past their grace period and can be removed: ` +
+        `${eligible.map((r) => r.kid).join(", ")}. Run \`npm run keys:prune -- --apply\`.`,
+    })
+  }
+
+  return issues
+}

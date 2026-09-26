@@ -98,10 +98,19 @@ npm run keys:rotate -- --dry-run    # 只显示将发生什么，不写数据库
    >
    > 必须重启进程（不是热重载 `.env`）。
 
-5. **核对重启后的状态**：JWKS 必须**同时**包含新 kid 和退休的旧 kid。
+5. **核对重启后的状态**：jwks 必须**同时**包含新 kid 和退休的旧 kid。
+
+   ```bash
+   npm run keys:health
+   ```
+
+   体检会把「环境变量 / 注册表 / JWKS」三者逐个比对，有问题退出码为 1（详见第 6 节）。
+   想看原始 JWKS 的话：
+
    ```bash
    curl -s $APP_URL/.well-known/jwks.json | grep -o '"kid":"[^"]*"'
    ```
+
    同时确认新签发的 token 里 `kid` 已经是新 kid。
 
 6. **清理旧密钥**：在 `retiredAt + 1 小时` 之后，才能删除 `SigningKey` 表里 `status = RETIRED`
@@ -205,7 +214,60 @@ npm run keys:rotate -- --dry-run    # 只显示将发生什么，不写数据库
 
 ---
 
-## 6. 相关命令速查
+## 6. 健康体检与启动自检
+
+上面第 3 节那个"重启陷阱"之所以危险，是因为漂移**在服务端是不可见的**：进程照常签发 token、
+JWKS 照常返回 200，只有接入方在验签时才发现问题。为此有两道自动防线。
+
+### 6.1 `npm run keys:health`（按需体检）
+
+审计三样东西是否一致：**环境变量里的密钥**、**`SigningKey` 注册表**、**JWKS 实际发布的内容**。
+
+```bash
+npm run keys:health
+```
+
+有 `error` 级问题时退出码为 **1**，所以可以直接用作部署门禁或轮换后的 smoke test：
+
+```bash
+npm run keys:rotate && npm run keys:health   # 轮换后立即确认
+```
+
+| 检查项 | 级别 | 含义 |
+|--------|------|------|
+| `no-active-key` | error | 没有任何 `ACTIVE` 行，无从追溯签发者 |
+| `multiple-active-keys` | error | 多于一行 `ACTIVE`，说明上次轮换没退休干净 |
+| `env-key-not-registered` | error | 环境变量里的 kid 不是那个 `ACTIVE` kid —— **典型的漂移** |
+| `active-key-not-published` | error | `ACTIVE` 密钥没出现在 JWKS 里，接入方无法验签 |
+| `retired-key-not-published` | error | `RETIRED` 密钥仍在宽限期却不在 JWKS 里，在途 token 会验失败 |
+| `stale-retired-keys` | warning | 有过了宽限期可清理的密钥，提示跑 `keys:prune` |
+
+> `stale-retired-keys` 是 **warning** 而非 error：宽限期内的密钥本来就不该删，轮换完立刻体检
+> 出现它是正常的。
+
+### 6.2 启动自检（`src/instrumentation.ts`）
+
+Next.js 的 `instrumentation.ts` 里导出 `register()`，会在**每个新服务实例启动时、开始处理请求
+之前执行一次**。RUAN 在这里跑同一套审计逻辑，发现漂移就打印醒目告警：
+
+```
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+SIGNING KEY PROBLEM — 2 issue(s) detected at startup
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  [ERROR] env-key-not-registered
+  ...
+```
+
+**它只打印日志，不会阻止启动。** 这是刻意的：密钥漂移会让验签退化，但登录和 session 仍然
+正常，直接拒绝启动会把一个"警告"升级成"服务不可用"。运维看到告警后再决定处理方式。
+
+> `register()` 在所有 runtime 都会被调用，而 Prisma 在 Edge runtime 不可用，所以自检用
+> `NEXT_RUNTIME !== "nodejs"` 提前返回。整个自检也包在 try/catch 里——诊断代码绝不能反过来
+> 把服务弄挂。
+
+---
+
+## 7. 相关命令速查
 
 | 命令 | 用途 |
 |------|------|
@@ -214,6 +276,7 @@ npm run keys:rotate -- --dry-run    # 只显示将发生什么，不写数据库
 | `npm run keys:rotate` | 执行轮换（登记新公钥 + 退休旧密钥，不删旧密钥） |
 | `npm run keys:prune` | 预览哪些已过宽限期的 `RETIRED` 密钥可删（默认不删） |
 | `npm run keys:prune -- --apply` | 实际删除已过宽限期的 `RETIRED` 密钥 |
+| `npm run keys:health` | 审计环境 / 注册表 / JWKS 是否一致（有问题退出码 1） |
 | `curl $APP_URL/.well-known/jwks.json` | 核对已发布的 kid 集合 |
 
 > `keys:generate` 与 `keys:rotate` 的区别：前者**不碰数据库**，只打印一对新密钥，

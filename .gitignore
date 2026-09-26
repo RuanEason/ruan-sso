@@ -51,4 +51,6 @@ next-env.d.ts
 /demo-client/
 /scripts/verify-*.mjs
 /scripts/check-*.mjs
+# ...but the key health check is portable and belongs in the repository.
+!/scripts/check-key-health.mjs
 

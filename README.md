@@ -55,9 +55,12 @@ npm run keys:generate
 ```bash
 npm run keys:rotate -- --dry-run   # 先预览
 npm run keys:rotate                # 实际执行
+npm run keys:health                # 核对环境 / 注册表 / JWKS 是否一致
 npm run keys:prune                 # 1 小时后：预览可清理的旧密钥
 npm run keys:prune -- --apply      # 实际清理
 ```
+
+服务启动时也会自动做一次一致性自检，发现漂移会在日志里打印醒目告警（不会阻止启动）。
 
 详见 [`docs/key-management.md`](docs/key-management.md)。
 

@@ -15,6 +15,7 @@
     "keys:generate": "node scripts/generate-keys.mjs",
     "keys:rotate": "node --no-warnings --import ./scripts/ts-alias.mjs scripts/rotate-keys.mjs",
     "keys:prune": "node --no-warnings --import ./scripts/ts-alias.mjs scripts/prune-keys.mjs",
+    "keys:health": "node --no-warnings --import ./scripts/ts-alias.mjs scripts/check-key-health.mjs",
     "postinstall": "prisma generate"
   },
   "prisma": {
