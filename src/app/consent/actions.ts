@@ -4,14 +4,12 @@ import { redirect } from "next/navigation"
 
 import { getSessionUser } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { userCanAccessClient } from "@/lib/org/access"
+import { approveAndIssueCode } from "@/lib/oidc/consent-flow"
 import {
-  buildRedirectWithCode,
   buildRedirectWithError,
   parseAuthorizeParams,
   validateAuthorizeRequest,
 } from "@/lib/oidc/validate"
-import { issueAuthorizationCode } from "@/lib/oidc/token"
 
 export async function consentAction(formData: FormData) {
   const decision = String(formData.get("decision") ?? "")
@@ -43,46 +41,29 @@ export async function consentAction(formData: FormData) {
     redirect(`/login?returnTo=${encodeURIComponent(`/oauth/authorize?${raw}`)}`)
   }
 
-  // Check organization access BEFORE recording consent. Persisting first would
-  // leave a consent record for a request that is then denied, which both
-  // misrepresents what the user approved and changes how later prompts render.
-  const allowed = await userCanAccessClient(
-    user.id,
-    client.id,
-    client.allowAllOrganizations
-  )
-  if (!allowed) {
-    redirect(
-      buildRedirectWithError(
-        params.redirect_uri,
-        "access_denied",
-        "User is not a member of an allowed organization",
-        params.state
+  const result = await approveAndIssueCode({
+    userId: user.id,
+    clientDbId: client.id,
+    allowAllOrganizations: client.allowAllOrganizations,
+    // An explicit "allow" click is a new user grant, so it is recorded.
+    recordConsent: true,
+    params,
+    scopes: validation.scopes,
+  })
+
+  if (!result.ok) {
+    if (result.failure.reason === "no_org_access") {
+      redirect(
+        buildRedirectWithError(
+          params.redirect_uri,
+          "access_denied",
+          "User is not a member of an allowed organization",
+          params.state
+        )
       )
-    )
+    }
+    throw new Error("invalid_client")
   }
 
-  await prisma.consent.upsert({
-    where: {
-      userId_clientId: { userId: user.id, clientId: params.client_id },
-    },
-    create: {
-      userId: user.id,
-      clientId: params.client_id,
-      scopes: validation.scopes,
-    },
-    update: { scopes: validation.scopes },
-  })
-
-  const code = await issueAuthorizationCode({
-    clientId: params.client_id,
-    userId: user.id,
-    redirectUri: params.redirect_uri,
-    scopes: validation.scopes,
-    codeChallenge: params.code_challenge!,
-    codeChallengeMethod: params.code_challenge_method ?? "S256",
-    nonce: params.nonce,
-  })
-
-  redirect(buildRedirectWithCode(params.redirect_uri, code, params.state))
+  redirect(result.redirectTo)
 }

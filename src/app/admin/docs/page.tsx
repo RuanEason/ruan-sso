@@ -311,7 +311,16 @@ export default async function AdminDocsPage() {
             <p className="text-muted-foreground">
               未登录时会被引导到登录页，登录后进入同意页展示请求的权限范围。
               用户拒绝时回调会带 <code className="font-mono text-xs">error=access_denied</code>。
-              同意页每次授权都会展示，不会因为已授权过而自动跳过。
+            </p>
+            <p className="text-muted-foreground">
+              首次授权一定会展示同意页。若用户此前已授权该应用，
+              <span className="text-foreground">且本次请求的 scope 未超出已授权范围</span>
+              ，则会自动跳过同意页，直接带 <code className="font-mono text-xs">code</code> 回调；
+              一旦应用新增 scope，用户会重新看到同意页，不会在不知情时被扩大授权。
+            </p>
+            <p className="text-muted-foreground">
+              用户可在 <code className="font-mono text-xs">/account</code>{" "}
+              查看并撤销已授权的应用。撤销后，该应用下次登录会重新展示同意页。
             </p>
 
             <p className="font-medium">步骤 4 · 用授权码换取令牌</p>

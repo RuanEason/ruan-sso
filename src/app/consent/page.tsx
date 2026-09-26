@@ -78,8 +78,11 @@ export default async function ConsentPage({ searchParams }: Props) {
     )
   }
 
-  // A standing consent record no longer auto-approves (that made denial
-  // unreachable); it only informs the prompt shown below.
+  // This page never auto-approves: reaching it means either there is no stored
+  // consent or the request widened the grant, and both cases require an
+  // explicit click. The skip decision lives in the authorize endpoint
+  // (shouldSkipConsent) and only fires for an already-covered request, so a
+  // user is never silently approved past this screen.
   const existing = await prisma.consent.findUnique({
     where: {
       userId_clientId: { userId: user.id, clientId: params.client_id },

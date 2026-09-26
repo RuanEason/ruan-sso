@@ -173,6 +173,8 @@ http://localhost:3000/oauth/authorize?response_type=code&client_id=ruan-demo-app
 ```
 
 3. 登录并同意授权后，回调拿到 `code`
+   - 首次授权会展示同意页；若此前已授权且本次 scope 未超出，则自动跳过同意页，同样带 `code` 回调
+   - 用户可在 `/account` 撤销授权，撤销后下次登录会重新展示同意页
 4. 兑换 token：
 
 ```bash
@@ -229,13 +231,15 @@ if (payload.nonce !== expectedNonce) throw new Error("nonce mismatch")
 src/app/
   login/                 # 登录门户（login-04 布局）
   consent/               # 授权同意
+  account/               # 已授权的应用与撤销授权
   admin/                 # 管理后台
   oauth/                 # OIDC 协议路由
   api/auth/              # Session 登录 API
+  api/account/           # 用户自助撤销授权 API
   api/admin/             # 后台管理 API
   .well-known/           # OIDC Discovery
 src/components/login-form.tsx
 src/lib/auth/            # 密码、Session、JWT
-src/lib/oidc/            # 校验与 token 兑换
+src/lib/oidc/            # 校验、同意流程与 token 兑换
 prisma/                  # Schema / migrations / seed
 ```

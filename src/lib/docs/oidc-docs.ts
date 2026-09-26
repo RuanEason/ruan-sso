@@ -136,7 +136,8 @@ export const ERRORS: DocError[] = [
   {
     code: "access_denied",
     where: "authorize 回调",
-    cause: "用户在同意页选择拒绝，或用户不属于该应用允许的组织",
+    cause:
+      "用户在同意页选择拒绝，或用户不属于该应用允许的组织（组织校验在自动跳过授权时同样生效）",
   },
   {
     code: "invalid_grant",
@@ -155,7 +156,7 @@ export const LIMITATIONS: string[] = [
   "不支持 implicit / client_credentials / device_code 等授权类型，仅支持 authorization_code 与 refresh_token。",
   "不支持 id_token_hint、prompt、login_hint、max_age 等参数。",
   "登出端点的 post_logout_redirect_uri 必须是该应用已注册的 redirect_uri 之一，且请求需携带 client_id；未注册的地址会被忽略并回落到登录页。",
-  "同意页每次授权都会展示，已授权过的应用不会静默跳过。",
+  "同意页仅在「用户从未授权过该应用」或「本次请求的 scope 超出已授权范围」时展示；已覆盖的重复授权会被静默跳过，不再询问。用户可在 /account 撤销授权，撤销后下次登录将重新展示同意页。",
   "PKCE 为强制项且仅支持 S256，不支持 plain。",
   "登录接口的失败尝试次数限制保存在单进程内存中；多实例部署时每个实例各自计数，效果会按实例数放大。",
 ]
@@ -264,6 +265,8 @@ const NOTES: string[] = [
   "id_token 与 userinfo 的字段均按 scope 裁剪，未申请 profile / email 时不会返回对应字段。",
   "id_token 含 auth_time（最终用户认证时间，秒级 Unix 时间戳）与 at_hash（access_token 的 SHA-256 左半摘要），可用于校验令牌绑定关系。",
   "登录接口对同一账号连续失败 5 次将锁定 15 分钟，之后返回 HTTP 429 并带 Retry-After 头。",
+  "同意页的跳过条件是「已存储的授权覆盖本次请求的全部 scope」。客户端一旦新增 scope，用户会重新看到同意页，因此不会在用户不知情时扩大授权范围。",
+  "无论同意页是由用户点击「同意」通过的，还是因已有授权被自动跳过的，服务端都会签发授权码；回调地址始终携带 code 参数。",
 ]
 
 export function buildAiDocJson(origin: string): AiDocJson {
@@ -340,8 +343,10 @@ ${JSON.stringify(discovery, null, 2)}
 2. 填写 Redirect URI，必须与客户端实际回调地址逐字符一致。
 3. 选择组织范围：勾选「允许全部组织」或至少绑定一个组织（两者都没有会导致所有用户被拒绝）。
 4. 生成 PKCE 参数并从浏览器跳转到授权端点。
-5. 用户登录并在同意页确认后，浏览器带 code 回调到 redirect_uri。
+5. 用户登录并确认授权后，浏览器带 code 回调到 redirect_uri。首次授权会展示同意页；用户此前已授权且本次 scope 未超出时会被自动跳过，无需再次确认。
 6. 用 code 调用令牌端点换取 token，再调用 userinfo 获取用户信息。
+
+> 用户可访问 ${origin}/account 查看并撤销已授权的应用；撤销后该应用下次登录会重新展示同意页。
 
 ### 1) 生成 PKCE 参数
 
