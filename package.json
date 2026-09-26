@@ -13,6 +13,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:setup": "prisma migrate deploy && tsx prisma/seed.ts",
     "keys:generate": "node scripts/generate-keys.mjs",
+    "keys:rotate": "node --no-warnings --import ./scripts/ts-alias.mjs scripts/rotate-keys.mjs",
     "postinstall": "prisma generate"
   },
   "prisma": {

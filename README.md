@@ -50,6 +50,15 @@ npm run keys:generate
 > `JWT_PRIVATE_KEY_PEM` 是最高敏感度机密：持有它即可伪造任意用户、任意应用的 token。
 > 切勿提交到仓库，切勿分发给接入方。
 
+已经上线的服务换密钥（轮换）用另一条命令，它会保留旧公钥以便存量 token 继续验签：
+
+```bash
+npm run keys:rotate -- --dry-run   # 先预览
+npm run keys:rotate                # 实际执行
+```
+
+详见 [`docs/key-management.md`](docs/key-management.md)。
+
 ### 3. 安装与初始化
 
 ```bash
@@ -114,6 +123,10 @@ RUAN 用组织约束「谁能登录哪些应用」：
 | `JWT_PUBLIC_KEY_PEM` | RS256 公钥（SPKI PEM），经 JWKS 对外发布 |
 | `JWT_ALLOW_HS256` | 过渡开关：是否仍接受 HS256 存量 token。默认 `false` |
 | `JWT_SECRET` | 仅在 `JWT_ALLOW_HS256=true` 时用于校验存量 HS256 token |
+
+> 修改这两个 PEM 后**必须重启进程**：Next.js 会把已读过的环境变量缓存在进程内，
+> 只改文件不重启会让服务器继续用旧密钥签名，而 JWKS 公布的是新公钥。见
+> [`docs/key-management.md`](docs/key-management.md)。
 
 ## OIDC 端点
 
