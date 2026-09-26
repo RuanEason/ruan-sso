@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `prisma generate` (run by postinstall and by `npm run build`) only reads
+      # the schema, so no database connection is required here. Nothing in this
+      # workflow needs repository secrets.
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      # Next.js fails the build on TypeScript errors, so this doubles as a
+      # typecheck gate. A placeholder APP_URL is enough: no route is executed
+      # during the build, and no signing key is read at build time.
+      - name: Build
+        run: npm run build
+        env:
+          APP_URL: http://localhost:3000

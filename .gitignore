@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+.vitest
 
 # next.js
 /.next/
@@ -39,3 +40,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# ---------------------------------------------------------------------------
+# Local-only development tooling. These drive a real browser against a running
+# dev server and a local MySQL, and hardcode this machine's browser path, so
+# they are deliberately not part of the published repository.
+# ---------------------------------------------------------------------------
+/demo-client/
+/scripts/verify-*.mjs
+/scripts/check-*.mjs
+

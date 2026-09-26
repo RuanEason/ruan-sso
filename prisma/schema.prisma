@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ClientStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum OrganizationType {
+  ENTERPRISE
+  GROUP
+  PUBLIC
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum OrgMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum KeyStatus {
+  ACTIVE
+  RETIRED
+}
+
+/// Signing keypair registry. Only PUBLIC keys are stored here; private keys live
+/// in JWT_PRIVATE_KEY_PEM and never touch the database.
+///
+/// RETIRED keys stay for at least the longest token lifetime (1h) after rotation
+/// so in-flight tokens signed with them still verify. Removing a key earlier
+/// invalidates every token it signed.
+model SigningKey {
+  id        String    @id @default(cuid())
+  kid       String    @unique
+  alg       String    @default("RS256")
+  publicJwk Json
+  status    KeyStatus @default(ACTIVE)
+  createdAt DateTime  @default(now())
+  retiredAt DateTime?
+
+  @@index([status])
+}
+
+model User {
+  id           String     @id @default(cuid())
+  username     String     @unique
+  email        String     @unique
+  passwordHash String
+  displayName  String
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  sessions           Session[]
+  authorizationCodes AuthorizationCode[]
+  consents           Consent[]
+  refreshTokens      RefreshToken[]
+  memberships        OrganizationMember[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  ip        String?
+  userAgent String?  @db.Text
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Organization {
+  id               String             @id @default(cuid())
+  slug             String             @unique
+  name             String
+  description      String?            @db.Text
+  type             OrganizationType
+  status           OrganizationStatus @default(ACTIVE)
+  allowSelfRegister Boolean           @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  members OrganizationMember[]
+  clients OAuthClientOrganization[]
+}
+
+model OrganizationMember {
+  id             String        @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgMemberRole @default(MEMBER)
+  createdAt      DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model OAuthClient {
+  id                   String       @id @default(cuid())
+  clientId             String       @unique
+  clientSecretHash     String?
+  name                 String
+  redirectUris         Json
+  allowedScopes        String       @default("openid profile email")
+  isConfidential       Boolean      @default(true)
+  allowAllOrganizations Boolean     @default(false)
+  status               ClientStatus @default(ACTIVE)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  authorizationCodes AuthorizationCode[]
+  consents           Consent[]
+  refreshTokens      RefreshToken[]
+  organizations      OAuthClientOrganization[]
+}
+
+model OAuthClientOrganization {
+  id             String @id @default(cuid())
+  clientId       String
+  organizationId String
+
+  client       OAuthClient  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, organizationId])
+  @@index([organizationId])
+}
+
+model AuthorizationCode {
+  id                  String    @id @default(cuid())
+  codeHash            String    @unique
+  clientId            String
+  userId              String
+  redirectUri         String
+  scopes              String
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  nonce               String?
+  expiresAt           DateTime
+  usedAt              DateTime?
+  createdAt           DateTime  @default(now())
+
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model Consent {
+  id        String   @id @default(cuid())
+  userId    String
+  clientId  String
+  scopes    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  @@unique([userId, clientId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  clientId  String
+  userId    String
+  scopes    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
