@@ -3,6 +3,7 @@ import { z } from "zod"
 
 import { createSession } from "@/lib/auth/session"
 import { hashPassword } from "@/lib/auth/password"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const bodySchema = z.object({
@@ -83,5 +84,16 @@ export async function POST(request: Request) {
   })
 
   await createSession(user.id)
+
+  await recordAudit({
+    action: "REGISTER",
+    actor: { id: user.id, username: user.username, role: user.role },
+    targetType: "user",
+    targetId: user.id,
+    targetName: user.username,
+    request,
+    metadata: { organizationSlug: org.slug },
+  })
+
   return NextResponse.json({ user, organization: { slug: org.slug, name: org.name } }, { status: 201 })
 }

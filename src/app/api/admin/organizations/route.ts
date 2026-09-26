@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { requireAdmin } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const createSchema = z.object({
@@ -47,8 +48,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -71,6 +73,17 @@ export async function POST(request: Request) {
         type: parsed.data.type,
         allowSelfRegister,
       },
+    })
+    await recordAudit({
+      action: "ADMIN_ORG_CREATED",
+      actor: admin,
+      targetType: "organization",
+      targetId: organization.id,
+      targetName: organization.name,
+      request,
+      // allowSelfRegister decides who can join without approval, so it is part
+      // of the security-relevant record.
+      metadata: { type: organization.type, allowSelfRegister },
     })
     return NextResponse.json({ organization }, { status: 201 })
   } catch {

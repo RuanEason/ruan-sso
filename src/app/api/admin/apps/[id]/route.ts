@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { requireAdmin } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const patchSchema = z
@@ -28,8 +29,9 @@ const patchSchema = z
 type Ctx = { params: Promise<{ id: string }> }
 
 export async function PATCH(request: Request, ctx: Ctx) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -89,6 +91,23 @@ export async function PATCH(request: Request, ctx: Ctx) {
     },
   })
 
+  await recordAudit({
+    action: "ADMIN_APP_UPDATED",
+    actor: admin,
+    targetType: "app",
+    targetId: app.clientId,
+    targetName: app.name,
+    request,
+    // `changed` is field names only; a redirect_uri change is a security
+    // relevant edit (it moves where codes are delivered) and is visible here.
+    metadata: {
+      changed: Object.keys(parsed.data),
+      ...(rest.allowAllOrganizations !== undefined
+        ? { allowAllOrganizations: rest.allowAllOrganizations }
+        : {}),
+    },
+  })
+
   return NextResponse.json({
     app: {
       ...app,
@@ -97,14 +116,30 @@ export async function PATCH(request: Request, ctx: Ctx) {
   })
 }
 
-export async function DELETE(_request: Request, ctx: Ctx) {
+export async function DELETE(request: Request, ctx: Ctx) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
   const { id } = await ctx.params
+  const target = await prisma.oAuthClient.findUnique({
+    where: { id },
+    select: { clientId: true, name: true },
+  })
+
   await prisma.oAuthClient.delete({ where: { id } })
+
+  await recordAudit({
+    action: "ADMIN_APP_DELETED",
+    actor: admin,
+    targetType: "app",
+    targetId: target?.clientId ?? id,
+    targetName: target?.name,
+    request,
+  })
+
   return NextResponse.json({ ok: true })
 }

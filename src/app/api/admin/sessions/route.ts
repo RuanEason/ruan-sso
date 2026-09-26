@@ -6,6 +6,7 @@ import {
   revokeSession,
   getSessionUser,
 } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 
 export async function GET() {
   try {
@@ -24,8 +25,9 @@ export async function GET() {
 }
 
 export async function DELETE(request: Request) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -42,5 +44,14 @@ export async function DELETE(request: Request) {
   }
 
   await revokeSession(id, user.id)
+
+  await recordAudit({
+    action: "ADMIN_SESSION_REVOKED",
+    actor: admin,
+    targetType: "session",
+    targetId: id,
+    request,
+  })
+
   return NextResponse.json({ ok: true })
 }

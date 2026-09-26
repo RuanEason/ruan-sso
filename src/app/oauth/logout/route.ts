@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
-import { destroySession } from "@/lib/auth/session"
+import { destroySession, getSessionUser } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 import { getAppUrl } from "@/lib/env"
 import { parseRedirectUris } from "@/lib/oidc/validate"
@@ -39,12 +40,32 @@ function logoutResponse(target: string | null) {
   )
 }
 
+/** Records the logout before the session is destroyed. */
+async function auditLogout(
+  request: Request,
+  clientId: string | null
+): Promise<void> {
+  const user = await getSessionUser()
+  if (!user) return
+  await recordAudit({
+    action: "LOGOUT",
+    actor: user,
+    targetType: clientId ? "app" : "user",
+    targetId: clientId ?? user.id,
+    targetName: clientId ?? user.username,
+    request,
+    metadata: { via: "oidc_end_session", clientId },
+  })
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url)
+  const clientId = url.searchParams.get("client_id")
   const target = await resolvePostLogoutRedirect(
-    url.searchParams.get("client_id"),
+    clientId,
     url.searchParams.get("post_logout_redirect_uri")
   )
+  await auditLogout(request, clientId)
   await destroySession()
   return logoutResponse(target)
 }
@@ -68,6 +89,7 @@ export async function POST(request: Request) {
   }
 
   const target = await resolvePostLogoutRedirect(clientId, candidate)
+  await auditLogout(request, clientId)
   await destroySession()
   return logoutResponse(target)
 }

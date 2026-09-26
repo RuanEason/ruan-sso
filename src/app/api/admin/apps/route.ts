@@ -3,6 +3,7 @@ import { z } from "zod"
 
 import { requireAdmin } from "@/lib/auth/session"
 import { hashPassword } from "@/lib/auth/password"
+import { recordAudit } from "@/lib/audit/log"
 import { generateToken } from "@/lib/crypto"
 import { prisma } from "@/lib/db"
 
@@ -57,8 +58,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -105,6 +107,23 @@ export async function POST(request: Request) {
       allowAllOrganizations: true,
       status: true,
       createdAt: true,
+    },
+  })
+
+  await recordAudit({
+    action: "ADMIN_APP_CREATED",
+    actor: admin,
+    targetType: "app",
+    targetId: app.clientId,
+    targetName: app.name,
+    request,
+    metadata: {
+      isConfidential: app.isConfidential,
+      allowAllOrganizations: app.allowAllOrganizations,
+      scopes: app.allowedScopes,
+      // The redirect URIs are where authorization codes will be delivered, so
+      // they belong in the record of who registered this client.
+      redirectUris: parsed.data.redirectUris,
     },
   })
 

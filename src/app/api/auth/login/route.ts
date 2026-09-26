@@ -9,6 +9,7 @@ import {
   LOGIN_LIMIT,
   LOGIN_WINDOW_MS,
 } from "@/lib/auth/rate-limit"
+import { clientIp, recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const bodySchema = z.object({
@@ -23,14 +24,6 @@ const bodySchema = z.object({
  * enumerate valid usernames.
  */
 const DUMMY_HASH = "$2b$12$C6UzMDM.H6dfI/f/IKcEeO1M0h6wZ7Ykz9Q3n5oJ0lQxWfPvJ4QqK"
-
-function clientIp(request: Request): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  )
-}
 
 export async function POST(request: Request) {
   const json = await request.json().catch(() => null)
@@ -54,6 +47,15 @@ export async function POST(request: Request) {
 
   if (!accountLimit.allowed || !ipLimit.allowed) {
     const retryAfter = Math.max(accountLimit.retryAfter, ipLimit.retryAfter)
+    // A blocked attempt is the signal that a guessing campaign is underway, so
+    // it is recorded even though the credentials were never checked.
+    await recordAudit({
+      action: "LOGIN_BLOCKED",
+      actorName: username,
+      request,
+      ip,
+      metadata: { retryAfter, reason: "rate_limited" },
+    })
     return NextResponse.json(
       { error: "尝试次数过多，请稍后再试" },
       { status: 429, headers: { "Retry-After": String(retryAfter) } }
@@ -74,11 +76,34 @@ export async function POST(request: Request) {
   )
 
   if (!user || user.status !== "ACTIVE" || !ok) {
+    // The submitted username is recorded to make credential-stuffing visible,
+    // but only as the *attempted* name: it is attacker-controlled text and is
+    // never treated as an identity (actorId stays null).
+    await recordAudit({
+      action: "LOGIN_FAILURE",
+      actorName: username,
+      request,
+      ip,
+      metadata: {
+        // Distinguishes the three causes without revealing them to the caller.
+        reason: !user ? "unknown_user" : user.status !== "ACTIVE" ? "disabled" : "bad_password",
+      },
+    })
     return NextResponse.json({ error: "用户名或密码错误" }, { status: 401 })
   }
 
   resetRateLimit(`login:user:${username}`)
   await createSession(user.id)
+
+  await recordAudit({
+    action: "LOGIN_SUCCESS",
+    actor: { id: user.id, username: user.username, role: user.role },
+    targetType: "user",
+    targetId: user.id,
+    targetName: user.username,
+    request,
+    ip,
+  })
 
   return NextResponse.json({
     user: {

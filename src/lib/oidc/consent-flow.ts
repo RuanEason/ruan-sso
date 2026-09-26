@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { recordAudit, type AuditActor } from "@/lib/audit/log"
 import { userCanAccessClient } from "@/lib/org/access"
 import { issueAuthorizationCode } from "@/lib/oidc/token"
 import { buildRedirectWithCode, scopesCovered } from "@/lib/oidc/validate"
@@ -71,6 +72,11 @@ export async function approveAndIssueCode(input: {
   recordConsent: boolean
   params: AuthorizeParams
   scopes: string
+  /** Audit context. Optional so pure tests can call this without a request. */
+  actor?: AuditActor | null
+  request?: Request
+  /** How approval was reached, recorded on the audit entry. */
+  via?: "consent_screen" | "consent_skipped"
 }): Promise<ApproveResult> {
   // Organization access is checked BEFORE any consent is written. Persisting
   // first would leave a consent record for a request that is then denied,
@@ -81,7 +87,21 @@ export async function approveAndIssueCode(input: {
     input.clientDbId,
     input.allowAllOrganizations
   )
-  if (!allowed) return { ok: false, failure: { reason: "no_org_access" } }
+  if (!allowed) {
+    await recordAudit({
+      action: "CONSENT_DENIED",
+      actor: input.actor ?? null,
+      targetType: "app",
+      targetId: input.params.client_id,
+      request: input.request,
+      metadata: {
+        reason: "no_org_access",
+        scopes: input.scopes,
+        via: input.via ?? "consent_screen",
+      },
+    })
+    return { ok: false, failure: { reason: "no_org_access" } }
+  }
 
   if (input.recordConsent) {
     await prisma.consent.upsert({
@@ -98,6 +118,17 @@ export async function approveAndIssueCode(input: {
       },
       update: { scopes: input.scopes },
     })
+
+    await recordAudit({
+      action: "CONSENT_GRANTED",
+      actor: input.actor ?? null,
+      targetType: "app",
+      targetId: input.params.client_id,
+      request: input.request,
+      // Scopes are recorded: "what did the user actually agree to" is the
+      // question this event exists to answer.
+      metadata: { scopes: input.scopes, via: input.via ?? "consent_screen" },
+    })
   }
 
   const code = await issueAuthorizationCode({
@@ -108,6 +139,23 @@ export async function approveAndIssueCode(input: {
     codeChallenge: input.params.code_challenge!,
     codeChallengeMethod: input.params.code_challenge_method ?? "S256",
     nonce: input.params.nonce,
+  })
+
+  // Recorded at the shared chokepoint, so a skip and an explicit approval are
+  // both accounted for and neither can silently omit the event.
+  await recordAudit({
+    action: "TOKEN_ISSUED",
+    actor: input.actor ?? null,
+    targetType: "app",
+    targetId: input.params.client_id,
+    request: input.request,
+    metadata: {
+      scopes: input.scopes,
+      via: input.via ?? "consent_screen",
+      // The code itself is deliberately NOT recorded: the audit table must not
+      // become a place where a redeemable credential can be read.
+      issued: "authorization_code",
+    },
   })
 
   return {

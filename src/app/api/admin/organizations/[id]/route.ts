@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { requireAdmin } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const patchSchema = z.object({
@@ -49,8 +50,9 @@ export async function GET(_request: Request, ctx: Ctx) {
 }
 
 export async function PATCH(request: Request, ctx: Ctx) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -66,17 +68,45 @@ export async function PATCH(request: Request, ctx: Ctx) {
     where: { id },
     data: parsed.data,
   })
+
+  await recordAudit({
+    action: "ADMIN_ORG_UPDATED",
+    actor: admin,
+    targetType: "organization",
+    targetId: organization.id,
+    targetName: organization.name,
+    request,
+    metadata: { changed: Object.keys(parsed.data) },
+  })
+
   return NextResponse.json({ organization })
 }
 
-export async function DELETE(_request: Request, ctx: Ctx) {
+export async function DELETE(request: Request, ctx: Ctx) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
   const { id } = await ctx.params
+  const target = await prisma.organization.findUnique({
+    where: { id },
+    select: { name: true, slug: true },
+  })
+
   await prisma.organization.delete({ where: { id } })
+
+  await recordAudit({
+    action: "ADMIN_ORG_DELETED",
+    actor: admin,
+    targetType: "organization",
+    targetId: id,
+    targetName: target?.name,
+    request,
+    metadata: { slug: target?.slug },
+  })
+
   return NextResponse.json({ ok: true })
 }

@@ -1,4 +1,5 @@
 import { getAppUrl } from "@/lib/env"
+import { AUDIT_ACTION_LABELS, AUDIT_ACTIONS } from "@/lib/audit/actions"
 import { PUBLIC_DOC_PATHS } from "@/lib/docs/paths"
 import { buildDiscoveryDocument } from "@/lib/oidc/discovery"
 import { endpointUrl } from "@/lib/oidc/endpoints"
@@ -159,6 +160,8 @@ export const LIMITATIONS: string[] = [
   "同意页仅在「用户从未授权过该应用」或「本次请求的 scope 超出已授权范围」时展示；已覆盖的重复授权会被静默跳过，不再询问。用户可在 /account 撤销授权，撤销后下次登录将重新展示同意页。",
   "PKCE 为强制项且仅支持 S256，不支持 plain。",
   "登录接口的失败尝试次数限制保存在单进程内存中；多实例部署时每个实例各自计数，效果会按实例数放大。",
+  "审计日志没有自动清理：记录会一直保留。数据量增长后需要自行归档或清理，否则 AuditLog 表会持续增大。",
+  "审计日志只记录“发生过什么”，不记录令牌、授权码、密码或 client_secret 的内容——这些凭据不会写入审计表，因此无法用它还原凭据。",
 ]
 
 /** Copy-pasteable examples. Secrets are placeholders, never real credentials. */
@@ -443,6 +446,18 @@ ${table(
 ## 已知限制
 
 ${LIMITATIONS.map((l) => `- ${l.replace(/\*\*/g, "")}`).join("\n")}
+
+## 审计日志
+
+系统会记录登录、授权与管理员操作，供管理员在后台「审计日志」页查看（需管理员登录）。
+
+**记录的事件**（${AUDIT_ACTIONS.length} 种）：
+
+${AUDIT_ACTIONS.map((a) => `- \`${a}\` — ${AUDIT_ACTION_LABELS[a]}`).join("\n")}
+
+**不会记录的内容**：密码、client_secret、授权码、access_token / refresh_token / id_token 的任何取值，以及令牌签名私钥。审计表记录的是“谁在何时对什么做了什么”，不是凭据本身。
+
+**写入语义**：审计写入是尽力而为的——记录失败不会导致登录失败或使已完成的删除回滚，失败只会输出到服务端 stderr。
 
 ## 其他注意事项
 

@@ -9,6 +9,7 @@ import {
   LayoutDashboardIcon,
   LogOutIcon,
   MonitorSmartphoneIcon,
+  ScrollTextIcon,
   UsersIcon,
 } from "lucide-react"
 
@@ -43,6 +44,7 @@ const nav = [
   { href: "/admin/users", label: "用户", icon: UsersIcon },
   { href: "/admin/apps", label: "应用", icon: AppWindowIcon },
   { href: "/admin/sessions", label: "会话", icon: MonitorSmartphoneIcon },
+  { href: "/admin/audit", label: "审计日志", icon: ScrollTextIcon },
   { href: "/admin/docs", label: "接入文档", icon: BookOpenTextIcon },
 ]
 

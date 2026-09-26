@@ -86,6 +86,9 @@ export async function GET(request: Request) {
       recordConsent: false,
       params,
       scopes: validation.scopes,
+      actor: user,
+      request,
+      via: "consent_skipped",
     })
     if (!result.ok) {
       // Organization access is re-checked inside approveAndIssueCode. Denying

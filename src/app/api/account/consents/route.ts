@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { getSessionUser } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 /** Lists the applications the signed-in user has standing consent for. */
@@ -55,12 +56,27 @@ export async function DELETE(request: Request) {
   }
 
   // Scoped by userId so one user can never delete another's grant.
+  const existing = await prisma.consent.findUnique({
+    where: { userId_clientId: { userId: user.id, clientId } },
+    select: { scopes: true, client: { select: { name: true } } },
+  })
+
   const deleted = await prisma.consent.deleteMany({
     where: { userId: user.id, clientId },
   })
   if (deleted.count === 0) {
     return NextResponse.json({ error: "Consent not found" }, { status: 404 })
   }
+
+  await recordAudit({
+    action: "CONSENT_REVOKED",
+    actor: user,
+    targetType: "app",
+    targetId: clientId,
+    targetName: existing?.client.name,
+    request,
+    metadata: { scopes: existing?.scopes },
+  })
 
   return NextResponse.json({ ok: true })
 }

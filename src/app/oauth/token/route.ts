@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { recordAudit } from "@/lib/audit/log"
 import { exchangeAuthorizationCode, exchangeRefreshToken } from "@/lib/oidc/token"
 
 function parseBasicAuth(header: string | null): { id: string; secret: string } | null {
@@ -52,6 +53,17 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+    await recordAudit({
+      action: "TOKEN_ISSUED",
+      targetType: "app",
+      targetId: clientId,
+      request,
+      metadata: {
+        grantType: "authorization_code",
+        scopes: result.scope,
+        issued: "access_token+refresh_token+id_token",
+      },
+    })
     return NextResponse.json(result)
   }
 
@@ -73,6 +85,17 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+    await recordAudit({
+      action: "TOKEN_REFRESHED",
+      targetType: "app",
+      targetId: clientId,
+      request,
+      metadata: {
+        grantType: "refresh_token",
+        scopes: result.scope,
+        issued: "access_token+refresh_token+id_token",
+      },
+    })
     return NextResponse.json(result)
   }
 

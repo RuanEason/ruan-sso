@@ -1,15 +1,26 @@
 "use server"
 
 import { redirect } from "next/navigation"
+import { headers } from "next/headers"
 
 import { getSessionUser } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
+import { recordAudit } from "@/lib/audit/log"
 import { approveAndIssueCode } from "@/lib/oidc/consent-flow"
 import {
   buildRedirectWithError,
   parseAuthorizeParams,
   validateAuthorizeRequest,
 } from "@/lib/oidc/validate"
+
+/**
+ * A Server Action is handed FormData rather than a Request, so the request
+ * metadata an audit entry needs is reconstructed from the incoming headers.
+ */
+async function requestHeaders(): Promise<Request> {
+  const h = await headers()
+  return new Request("http://internal/consent", { headers: h })
+}
 
 export async function consentAction(formData: FormData) {
   const decision = String(formData.get("decision") ?? "")
@@ -25,7 +36,18 @@ export async function consentAction(formData: FormData) {
     throw new Error(validation.ok ? "invalid_client" : validation.description)
   }
 
+  const user = await getSessionUser()
+
   if (decision === "deny") {
+    await recordAudit({
+      action: "CONSENT_DENIED",
+      actor: user ?? null,
+      targetType: "app",
+      targetId: params.client_id,
+      targetName: client.name,
+      request: await requestHeaders(),
+      metadata: { reason: "user_refused", scopes: validation.scopes },
+    })
     redirect(
       buildRedirectWithError(
         params.redirect_uri,
@@ -36,7 +58,6 @@ export async function consentAction(formData: FormData) {
     )
   }
 
-  const user = await getSessionUser()
   if (!user) {
     redirect(`/login?returnTo=${encodeURIComponent(`/oauth/authorize?${raw}`)}`)
   }
@@ -49,6 +70,9 @@ export async function consentAction(formData: FormData) {
     recordConsent: true,
     params,
     scopes: validation.scopes,
+    actor: user,
+    request: await requestHeaders(),
+    via: "consent_screen",
   })
 
   if (!result.ok) {

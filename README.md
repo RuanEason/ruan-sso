@@ -223,7 +223,19 @@ if (payload.nonce !== expectedNonce) throw new Error("nonce mismatch")
 - **用户**：创建、编辑、启用/禁用、重置密码
 - **应用**：注册 OAuth Client（secret 仅创建时展示一次）
 - **会话**：查看并撤销当前管理员会话
+- **审计日志**：登录、授权与管理员操作记录，可按事件类型与操作者过滤
 - **接入文档**：第三方接入指南，含 AI 可读版本
+
+## 审计日志
+
+登录、授权与管理员操作都会写入 `AuditLog` 表，可在 `/admin/audit` 查看。
+
+- 覆盖事件：登录成功/失败/被限流、登出、自助注册、同意/拒绝/撤销授权、签发与刷新令牌，以及全部管理员操作（用户、应用、组织、成员、会话）
+- **不记录凭据**：密码、client_secret、授权码与各类 token 的取值都不会写入审计表
+- **表结构不设外键**：删除用户时，记录“谁删除了他”的那一行不会被级联删除，因此删除行为事后仍可追溯
+- 写入失败不会影响被审计的操作（例如审计表异常时登录仍可正常进行）
+
+保留策略：**目前没有自动清理**，记录会一直保留，需要自行归档。
 
 ## 目录结构
 
@@ -236,10 +248,11 @@ src/app/
   oauth/                 # OIDC 协议路由
   api/auth/              # Session 登录 API
   api/account/           # 用户自助撤销授权 API
-  api/admin/             # 后台管理 API
+  api/admin/             # 后台管理 API（含 /api/admin/audit）
   .well-known/           # OIDC Discovery
 src/components/login-form.tsx
 src/lib/auth/            # 密码、Session、JWT
+src/lib/audit/           # 审计日志写入、查询与事件目录
 src/lib/oidc/            # 校验、同意流程与 token 兑换
 prisma/                  # Schema / migrations / seed
 ```

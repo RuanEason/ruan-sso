@@ -3,6 +3,7 @@ import { z } from "zod"
 
 import { requireAdmin } from "@/lib/auth/session"
 import { hashPassword } from "@/lib/auth/password"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const createSchema = z.object({
@@ -36,8 +37,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -67,6 +69,17 @@ export async function POST(request: Request) {
         status: true,
         createdAt: true,
       },
+    })
+    await recordAudit({
+      action: "ADMIN_USER_CREATED",
+      actor: admin,
+      targetType: "user",
+      targetId: user.id,
+      targetName: user.username,
+      request,
+      // The role is worth recording: creating an ADMIN is the privilege
+      // escalation an audit trail most needs to capture.
+      metadata: { role: user.role },
     })
     return NextResponse.json({ user }, { status: 201 })
   } catch {

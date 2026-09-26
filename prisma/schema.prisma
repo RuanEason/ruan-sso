@@ -44,6 +44,73 @@ enum KeyStatus {
   RETIRED
 }
 
+/// Every event the audit trail can record. An enum (rather than a free-form
+/// string) keeps the vocabulary closed: a typo cannot silently create an event
+/// type nobody queries, and adding one is a deliberate, reviewable migration.
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGIN_BLOCKED
+  LOGOUT
+  REGISTER
+
+  CONSENT_GRANTED
+  CONSENT_DENIED
+  CONSENT_REVOKED
+
+  TOKEN_ISSUED
+  TOKEN_REFRESHED
+
+  ADMIN_USER_CREATED
+  ADMIN_USER_UPDATED
+  ADMIN_USER_DELETED
+  ADMIN_APP_CREATED
+  ADMIN_APP_UPDATED
+  ADMIN_APP_DELETED
+  ADMIN_ORG_CREATED
+  ADMIN_ORG_UPDATED
+  ADMIN_ORG_DELETED
+  ADMIN_MEMBER_ADDED
+  ADMIN_MEMBER_REMOVED
+  ADMIN_SESSION_REVOKED
+}
+
+/// Append-only audit trail.
+///
+/// Deliberately has NO foreign keys to User. With `onDelete: Cascade` a
+/// cascading user deletion would take the very rows that record who deleted
+/// them, destroying the evidence for the most sensitive action in the system.
+/// The actor/target identifiers are therefore plain strings and the names are
+/// denormalised snapshots, so a log stays readable after its subject is gone.
+///
+/// Nothing here may ever hold a credential: no passwords, authorization codes,
+/// tokens or client secrets. `recordAudit` enforces that by keeping writes
+/// behind one function.
+model AuditLog {
+  id     String      @id @default(cuid())
+  action AuditAction
+
+  actorId   String?
+  actorName String?
+  actorRole Role?
+
+  targetType String?
+  targetId   String?
+  targetName String?
+
+  ip        String?
+  userAgent String? @db.Text
+  /// Event-specific detail (changed field names, scopes, ...). Never secrets.
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+}
+
 /// Signing keypair registry. Only PUBLIC keys are stored here; private keys live
 /// in JWT_PRIVATE_KEY_PEM and never touch the database.
 ///

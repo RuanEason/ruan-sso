@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { requireAdmin } from "@/lib/auth/session"
+import { recordAudit } from "@/lib/audit/log"
 import { prisma } from "@/lib/db"
 
 const addSchema = z.object({
@@ -13,8 +14,9 @@ const addSchema = z.object({
 type Ctx = { params: Promise<{ id: string }> }
 
 export async function POST(request: Request, ctx: Ctx) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -60,6 +62,17 @@ export async function POST(request: Request, ctx: Ctx) {
         },
       },
     })
+    // Membership decides which OAuth clients a user may use, so both the
+    // organization and the user are named in the record.
+    await recordAudit({
+      action: "ADMIN_MEMBER_ADDED",
+      actor: admin,
+      targetType: "organization",
+      targetId: organizationId,
+      targetName: org.name,
+      request,
+      metadata: { memberId: user.id, memberName: user.username, role: parsed.data.role },
+    })
     return NextResponse.json({ member }, { status: 201 })
   } catch {
     return NextResponse.json({ error: "用户已在该组织中" }, { status: 409 })
@@ -67,8 +80,9 @@ export async function POST(request: Request, ctx: Ctx) {
 }
 
 export async function DELETE(request: Request, ctx: Ctx) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -80,8 +94,24 @@ export async function DELETE(request: Request, ctx: Ctx) {
     return NextResponse.json({ error: "userId required" }, { status: 400 })
   }
 
+  const [org, user] = await Promise.all([
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { username: true } }),
+  ])
+
   await prisma.organizationMember.deleteMany({
     where: { organizationId, userId },
   })
+
+  await recordAudit({
+    action: "ADMIN_MEMBER_REMOVED",
+    actor: admin,
+    targetType: "organization",
+    targetId: organizationId,
+    targetName: org?.name,
+    request,
+    metadata: { memberId: userId, memberName: user?.username },
+  })
+
   return NextResponse.json({ ok: true })
 }

@@ -11,11 +11,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const consentUpsert = vi.fn()
 const canAccess = vi.fn()
 const issueAuthorizationCode = vi.fn()
+const auditCreate = vi.fn()
 
 vi.mock("@/lib/db", () => ({
   prisma: {
     consent: {
       upsert: (...args: unknown[]) => consentUpsert(...args),
+    },
+    auditLog: {
+      create: (...args: unknown[]) => auditCreate(...args),
     },
   },
 }))
@@ -56,7 +60,13 @@ beforeEach(() => {
   canAccess.mockResolvedValue(true)
   issueAuthorizationCode.mockResolvedValue("AUTH_CODE")
   consentUpsert.mockResolvedValue({})
+  auditCreate.mockResolvedValue({})
 })
+
+/** Actions recorded on the audit trail, in order. */
+function auditedActions(): string[] {
+  return auditCreate.mock.calls.map((c) => (c[0] as { data: { action: string } }).data.action)
+}
 
 describe("approveAndIssueCode", () => {
   it("issues a code and returns a callback carrying it", async () => {
@@ -81,6 +91,30 @@ describe("approveAndIssueCode", () => {
     expect(skipped.ok && explicit.ok).toBe(true)
     expect(issueAuthorizationCode).toHaveBeenCalledTimes(2)
     expect(consentUpsert).toHaveBeenCalledTimes(1)
+  })
+
+  it("audits token issuance on both paths but records a grant only once", async () => {
+    await approve({ recordConsent: false })
+    expect(auditedActions()).toEqual(["TOKEN_ISSUED"])
+
+    auditCreate.mockClear()
+    await approve({ recordConsent: true })
+    // A skip must not claim the user granted something new.
+    expect(auditedActions()).toEqual(["CONSENT_GRANTED", "TOKEN_ISSUED"])
+  })
+
+  it("records which route reached approval", async () => {
+    await approve({ recordConsent: false, via: "consent_skipped" })
+    const data = auditCreate.mock.calls[0][0].data as { metadata: { via: string } }
+    expect(data.metadata.via).toBe("consent_skipped")
+  })
+
+  it("never writes the authorization code itself into the trail", async () => {
+    // The audit table must not become a place a redeemable credential can be
+    // read from.
+    await approve()
+    const serialised = JSON.stringify(auditCreate.mock.calls)
+    expect(serialised).not.toContain("AUTH_CODE")
   })
 
   it("passes PKCE and nonce through unchanged", async () => {
