@@ -264,6 +264,8 @@ src/lib/oidc/            # 校验、同意流程与 token 兑换
 src/lib/portal.ts        # 门户可见应用过滤（与 userCanAccessClient 同一套规则）
 src/lib/return-to.ts     # 登录落点与 returnTo 校验（零依赖，客户端/服务端共用）
 prisma/                  # Schema / migrations / seed
+docs/agent-context-backup.md   # AGENTS.md 可维护区的逐字备份（还原用，勿改）
+scripts/restore-agent-context.mjs  # 从上述备份还原可维护区
 ```
 
 ### 登录落点
@@ -293,3 +295,25 @@ prisma/                  # Schema / migrations / seed
   `/oauth/authorize` → `approveAndIssueCode()`。
 - 该路由的 `?next=` 仅接受与已注册回调地址**同源**的值，防止开放重定向。
 - 用户没有任何可访问应用时，门户显示空状态并提示联系管理员。
+
+## 给 AI 会话的项目背景（AGENTS.md）
+
+`AGENTS.md` 里除 Next.js 自动写入的区块外，还有一个 **`project-context`（AI 可维护区）**，
+内容是本项目的背景、架构约束、已知坑位与工作方式偏好。AI 会话会随上下文自动读取它
+（`CLAUDE.md` 只是 `@AGENTS.md`，因此 Claude Code 同样生效）。
+
+约定：
+
+- 该区**鼓励 AI 会话修改、补充、批注**（发现错误就地更正，并追加
+  `> 批注(YYYY-MM-DD, 依据): ...`），但**禁止整体删除**；确已过时就标注 `[已过时:原因]`。
+- 上方 `nextjs-agent-rules` 区块由 `next dev` 自动维护，不要手改。
+  `next dev` 只替换两个标记**之间**的内容，因此不会覆盖 `project-context`。
+- 该区被写坏时可从逐字备份还原：
+
+```bash
+node scripts/restore-agent-context.mjs        # 还原
+node scripts/restore-agent-context.mjs --dry  # 只看差异
+```
+
+备份文件为 `docs/agent-context-backup.md`（首次写入时的副本，勿改）。脚本只替换
+`project-context` 两个标记之间的内容，不影响文件其余部分。
